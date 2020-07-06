@@ -1,0 +1,5 @@
+This folder is intended to hold the symmetric key, for a specific fakeYubi instance.
+
+At the moment the key is hardcoded and the library as such not viable for actual use.
+
+In future iterations a sym_key file shall be generated upon building the library for the first time. 
