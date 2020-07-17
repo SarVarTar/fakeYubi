@@ -1,23 +1,4 @@
-#include <assert.h>
-#include <fcntl.h>
-#include <pthread.h>
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-#include <unistd.h>
-
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <sys/ioctl.h>
-#include <sys/mman.h>
-
-#include <linux/types.h>
-#include <linux/hid.h>
-#include <linux/usb/ch9.h>
-#include "sendpackages.h"
+#include "dependencies.h"
 
 void send_packages(__u8 *package, int data_to_write[], __u8 *payload, __u8 cid[4], __u8 ctap_cmd, __u16 payload_Length){
 	int payload_Index = 0;

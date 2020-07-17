@@ -13,13 +13,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
-
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/wait.h>
-
 #include <linux/types.h>
 #include <linux/hid.h>
 #include <linux/usb/ch9.h>
@@ -29,11 +27,12 @@
 #include <openssl/pem.h>
 #include <openssl/ecdsa.h>
 #include <openssl/bn.h>
-#include "./src/cbor.h"
+#include <cbor.h>
 
+#include "dependencies.h"
 #include "sendpackages.h"
 #include "authenticatorStatics.h"
-#include "authenticatorMakeCredential.h"
+#include "ctaplib.h"
 
 /* added for fakeYubi - taken from raw_gadget keyboard example----------------------------------------------------------------------*/
 
@@ -128,413 +127,6 @@ struct usb_raw_eps_info {
 #define USB_RAW_IOCTL_EP_CLEAR_HALT	_IOW('U', 14, __u32)
 #define USB_RAW_IOCTL_EP_SET_WEDGE	_IOW('U', 15, __u32)
 
-/* BEGIN CODE CHANGES FOR FAKEYUBI ----------------------------------------------------------------------*/
-/**/// original code for fakeYubi made by marcus propp
-/**/#define SUPPORTED_ALGORITHMS {-7};
-/**/__u8 aaguid[16] = {
-/**/		// fake
-/**/		0x77, 0xf0, 0x76, 0xdf, 0xe6, 0x92, 0x6c, 0xe6, 0x24, 0x5e, 0xe4, 0xf5, 0x53, 0x2e, 0xc4, 0x41 
-/**/		// original yubikey nfc
-/**/		// 0x2F, 0xC0, 0x57, 0x9F, 0x81, 0x13, 0x47, 0xEA, 0xB1, 0x16, 0xBB, 0x5A, 0x8D, 0xB9, 0x20, 0x2A
-/**/		};
-/**/__u8 sym_key[32] = {
-/**/		0x64, 0x69, 0x65, 0x64, 0xc3,	0xb6, 0x6e, 0x65, 0x72, 0x74,
-/**/		0xc3, 0xbc, 0x74, 0x65, 0x6e, 0x6d, 0x79, 0x73, 0x74, 0x65,
-/**/		0x72, 0x69, 0x75, 0x6d, 0x73, 0x6c, 0xc3, 0xb6, 0x73, 0x75,
-/**/		0x6e, 0x67
-/**/		};
-/**/__u8 iv[16] = {
-/**/		0x70, 0x6f, 0x77, 0x65, 0x72, 0x65, 0x64, 0x62, 0x79, 0x75,
-/**/		0x6e, 0x6b, 0x6e, 0x6f, 0x77, 0x6e
-/**/		};
-/**/
-/**/__u8 authenticatorInfoCBOR[] = {
-/**/	0x00,	// status code success; not part of CBOR
-/**/	//taken and adapted from yubikey NFC
-/**/	0xA7, 0x01, 0x82, 0x68, 0x46, 0x49, 0x44, 0x4F, 0x5F, 0x32, 0x5F, 0x30,
-/**/  0x6C, 0x46, 0x49, 0x44, 0x4F, 0x5F, 0x32, 0x5F, 0x31, 0x5F, 0x50, 0x52,
-/**/	0x45, 0x03, 0x50, 0x77, 0xf0, 0x76, 0xdf, 0xe6, 0x92, 0x6c, 0xe6, 0x24,
-/**/	0x5e, 0xe4, 0xf5, 0x53, 0x2e, 0xc4, 0x41, 0x04, 0xA5, 0x62, 0x72, 0x6B,
-/**/  0xF4, 0x62, 0x75, 0x70, 0xF5, 0x64, 0x70, 0x6C, 0x61, 0x74, 0xF4, 0x69,
-/**/  0x63, 0x6C, 0x69, 0x65, 0x6E, 0x74, 0x50, 0x69, 0x6E, 0xF4, 0x75, 0x63,
-/**/	0x72, 0x65, 0x64, 0x65, 0x6E, 0x74, 0x69, 0x61, 0x6C, 0x4D, 0x67, 0x6D, 
-/**/	0x74, 0x50, 0x72, 0x65, 0x76, 0x69, 0x65, 0x77, 0xF4, 0x07, 0x08, 0x08,
-/**/  0x18, 0x80, 0x09, 0x81, 0x63, 0x75, 0x73, 0x62, 0x0A, 0x82, 0xA2, 0x63,
-/**/  0x61, 0x6C, 0x67, 0x26, 0x64, 0x74, 0x79, 0x70, 0x65, 0x6A, 0x70, 0x75,
-/**/	0x62, 0x6C, 0x69, 0x63, 0x2D, 0x6B, 0x65, 0x79, 0xA2, 0x63, 0x61, 0x6C,
-/**/	0x67, 0x27, 0x64, 0x74, 0x79, 0x70, 0x65, 0x6A, 0x70, 0x75, 0x62, 0x6C, 
-/**/	0x69, 0x63, 0x2D, 0x6B, 0x65, 0x79 
-/**/	};  
-/**/
-/**/int write_flag[] = {0};
-/**///int *write_flag = &flags[0]; // flag indicating if IN endpoint shall send data
-/**/__u8 package[64];	// empty package to work with globally
-/**/
-/**/void ctaphid_init(__u8 cid[4], __u8 nonce[], __u16 nonce_length){
-/**/	time_t t;
-/**/	__u8 payload[64];
-/**/
-/**/	srand((unsigned) time(&t));								
-/**/	for(int i = 0; i < nonce_length; i++){ 	// Keep 8 Byte Nonce (payload)
-/**/		payload[i] = nonce[i];
-/**/		}
-/**/	payload[nonce_length] = rand() % 255; 	// new Channel ID 2nd byte
-/**/	payload[nonce_length+1] = rand() % 255; 	// new Channel ID 1st byte
-/**/	payload[nonce_length+2] = rand() % 255; 	// new Channel ID 3rd byte
-/**/	payload[nonce_length+3] = rand() % 255; 	// new Channel ID 4th byte
-/**/	payload[nonce_length+4] = 0x02; 	// CTAPHID Protocol Version
-/**/	payload[nonce_length+5] = 0x05; 	// Major Device Number
-/**/	payload[nonce_length+6] = 0x02; 	// Minor Device Number
-/**/	payload[nonce_length+7] = 0x01; 	// Build Device Version Number
-/**/	payload[nonce_length+8] = 0x08+0x04; 	// Capabilites Flags:
-/**/																				// 0x08: NO CTAPHID_MSG
-/**/																				// 0x04: CTAPHID_CBOR
-/**/																				// 0x01: CTAPHID_WINK
-/**/	for(int i = nonce_length+9; i < 63; i++){ 	// rest is 0
-/**/		payload[i] = 0;
-/**/	}
-/**/	printf("sending init package:\n");
-/**/	for(int i = 0; i < 64; i++){
-/**/		printf("%d ", payload[i]);
-/**/	}
-/**/	send_packages(package, write_flag, payload, cid, 0x86, 0x0011);
-/**/	printf("\n");
-/**/}
-/**/
-/**/void ctap_cbor_get_info(__u8 cid[4]){
-/**/		__u16 payload_length = sizeof(authenticatorInfoCBOR);
-/**/		send_packages(package, write_flag, authenticatorInfoCBOR, cid, 0x90, payload_length);
-/**/}
-/**/
-/**/void ctap_cbor_make_credential(__u8 cid[], __u8 payload[], __u16 payload_length){
-/**/
-/**/	// initialize Return data
-/**/	__u8 status[] = {0x00}; // status code for usb package -> default is success
-/**/
-/**/	// init possible input data
-/**/	cbor_mutable_data clientDataHash = NULL;
-/**/	struct cbor_pair * relying_party= NULL;
-/**/	struct cbor_pair * user= NULL;
-/**/	struct cbor_item_t ** pubKeyCredParams= NULL;
-/**/	size_t pubKeyCredParams_size= 0;
-/**/	struct cbor_pair * options_map= NULL;
-/**/	size_t options_map_size= 0;
-/**/
-/**/	// load input data
-/**/	__u8 source[(payload_length-1)];	//cut cbor command byte from payload
-/**/	for(int i = 1; i<payload_length; i++){
-/**/		source[i-1] = payload[i];
-/**/	}
-/**/
-/**/	struct cbor_load_result result;
-/**/	cbor_item_t* json_map = cbor_load(source, (payload_length-1), &result); // loading cbor data
-/**/	struct cbor_pair * fields = cbor_map_handle(json_map); // decode cbor map into key/value pairs
-/**/	size_t number_of_keys = cbor_map_size(json_map);	// extract number of keys
-/**/
-/**/	// load key values of input
-/**/	int keys[number_of_keys];
-/**/	for(int i = 0; i < number_of_keys; i++){
-/**/		keys[i] = cbor_get_uint8(fields[i].key);
-/**/	}
-/**/	
-/**/	// extract input parameters
-/**/	for(int i = 0; i< number_of_keys; i++){
-/**/		switch(keys[i]){
-/**/			case 1: // clientDataHash
-/**/				clientDataHash = cbor_bytestring_handle(fields[0].value); // extract clientDataHash
-/**/				break;
-/**/			case 2: // rp
-/**/				relying_party = cbor_map_handle(fields[1].value);	// extract relying party struct
-/**/				break;
-/**/			case 3:	// user
-/**/				user = cbor_map_handle(fields[2].value);	//extract user struct
-/**/				break;
-/**/			case 4: // pubKeyCredParams
-/**/				pubKeyCredParams = cbor_array_handle(fields[3].value); // extract pubKeyCredParams Array
-/**/				pubKeyCredParams_size = cbor_array_size(fields[3].value);	// extract size of pubKeyCredParams
-/**/				break;
-/**/			case 5: // excludeList
-/**/				// not implemented yet
-/**/				break;
-/**/			case 6: // extensions
-/**/				// not implemented yet
-/**/				break;
-/**/			case 7: // options
-/**/				options_map = cbor_map_handle(fields[6].value);
-/**/				options_map_size = cbor_map_size(fields[6].value);
-/**/				break;
-/**/			case 8: // pinUvAuthParam
-/**/				// not implemented yet
-/**/				break;
-/**/			case 9: // pinUvAuthProtocol
-/**/				// not implemented yet
-/**/				break;
-/**/			default: // unknown parameter
-/**/				break;
-/**/		}
-/**/	}
-/**/
-/**/	// check wanted algorithms
-/**/	int COSE_algorithm = get_supported_algorithm(pubKeyCredParams_size, pubKeyCredParams);
-/**/	if(COSE_algorithm == 0){
-/**/		printf("CTAP2_ERR_UNSUPPORTED_ALGORITHM\n");
-/**/		status[0] = 0x26;
-/**/		send_packages(package, write_flag, status, cid, 0x90, 0x01);
-/**/		return;
-/**/	}
-/**/
-/**/	// check options and set flags: 0x01 -> up; 0x02 -> uv; 0x04 -> rk; 0x80 -> unknown option; 0x08..0x40 usable for extension
-/**/	__u8 options = get_options(options_map_size, options_map);
-/**/	if(options >= 0x80){
-/**/		printf("CTAP2_ERR_INVALID_OPTION");
-/**/		status[0] = 0x2C;
-/**/		send_packages(package, write_flag, status, cid, 0x90, 0x01);
-/**/		return;
-/**/	}
-/**/	if(options > 0x01){	// only "up" (user presence) supported yet
-/**/		printf("CTAP2_ERR_UNSUPPORTED_OPTION");
-/**/		status[0] = 0x2B;
-/**/		send_packages(package, write_flag, status, cid, 0x90, 0x01);
-/**/		return;
-/**/	}
-/**/
-/**/	// check extensions (not implemented)
-/**/
-/**/	// process exclude list (not implemented)
-/**/
-/**/	// get user verification (not implemented)
-/**/
-/**/	// perform credProtection (not implemented)
-/**/
-/**/	// start sending keep alives
-/**/	send_keepalive_waiting_for_up(package, write_flag, cid);
-/**/	// wait for user permission
-/**/	if(!user_permission()){ 
-/**/		printf("CTAP2_ERR_OPERATION_DENIED");
-/**/		status[0] = 0x27;
-/**/		send_packages(package, write_flag, status, cid, 0x90, 0x01);
-/**/		return;
-/**/	}
-/**/	// send processing package
-/**/	send_keepalive_processing(package, write_flag, cid);
-/**/	sleep(0.1);
-/**/
-/**/	// generate credential key pair
-/**/	EVP_PKEY *newkey = generate_key();
-/**/	EC_KEY *newEcKey = EVP_PKEY_get1_EC_KEY(newkey);
-/**/	unsigned char *newkey_buf;
-/**/	int newkey_bufsize = i2d_ECPrivateKey(newEcKey, NULL);
-/**/	newkey_buf = (unsigned char*) malloc(newkey_bufsize * sizeof(unsigned char));
-/**/	i2d_ECPrivateKey(newEcKey, &newkey_buf);
-/**/
-/**/	// extract x and y coordinate of public key
-/**/	__u8 *x_coord;
-/**/	__u8 *y_coord;
-/**/	int coord_size = extract_coords(&x_coord, &y_coord, newEcKey);
-/**/
-/**/	// store key if residential key (rk) options parameter is present (not implemented)
-/**/
-/**/	// hash relying party id
-/**/	unsigned char rpIdHash[32];	
-/**/	unsigned char *rpId;
-/**/	int rpId_length;
-/**/	rpId = cbor_string_handle(relying_party[0].value);
-/**/	rpId_length = cbor_string_length(relying_party[0].value);
-/**/	SHA256_hash(rpId, rpId_length, rpIdHash);
-/**/
-/**/	// set flags
-/**/	__u8 flags = 0b01000001;
-/**/	// set signCount
-/**/	__u32 signCount;
-/**/	FILE *fp = fopen("./counter.txt", "r+");
-/**/	if(!fscanf(fp, "%d", &signCount)){
-/**/		//handle error
-/**/	};
-/**/
-/**/	// set public key according to COSE encoding
-/**/	cbor_item_t *COSE_public_key;
-/**/	construct_COSE_public_key(2, -7, 1, x_coord, y_coord, coord_size, &COSE_public_key); 
-/**/	// serialize public key
-/**/	__u8 serialized_public_key_buffer[1024];
-/**/	int public_key_size = cbor_serialize(COSE_public_key, serialized_public_key_buffer, 1024);
-/**/	__u8 serialized_public_key[public_key_size];
-/**/	for(int i = 0; i<public_key_size; i++){
-/**/		serialized_public_key[i] = serialized_public_key_buffer[i];
-/**/	}
-/**/
-/**/	// create public key credential source as CBOR map
-/**/	cbor_item_t *publicKeyCredentialSource;
-/**/	char *relying_party_id = cbor_string_handle(relying_party[0].value); 
-/**/	__u8 *user_handle = cbor_bytestring_handle(user[0].value);
-/**/	int user_handle_length = cbor_bytestring_length(user[0].value);
-/**/	construct_public_key_credential_source(&publicKeyCredentialSource, newkey_buf, newkey_bufsize, relying_party_id, user_handle, user_handle_length);
-/**/	// serialize public key credential source
-/**/	__u8 serialization_buffer[1024];
-/**/	int size = cbor_serialize(publicKeyCredentialSource, serialization_buffer, 1024);
-/**/	__u8 serialized_publicKeyCredentialSource[size];
-/**/	for(int i = 0; i < size; i++){
-/**/		serialized_publicKeyCredentialSource[i] = serialization_buffer[i];
-/**/	} 
-/**/
-/**/	// encrypt credential source => credential ID
-/**/  unsigned char ciphertext[1024];
-/**/	__u16 credentialIdLength = encrypt (serialized_publicKeyCredentialSource, size, sym_key, iv,
-/**/                            ciphertext);
-/**/	__u8 credentialID[credentialIdLength];
-/**/	for(int i = 0; i < credentialIdLength; i++){
-/**/		credentialID[i] = ciphertext[i];
-/**/	} 
-/**/
-/**/  // construct attested credential data
-/**/	int attCredDataLen = 16 + 2 + credentialIdLength + public_key_size;
-/**/	__u8 attestedCredentialData[attCredDataLen];
-/**/	for(int i = 0; i< 16; i++){ // 16 bytes aaguid ID
-/**/		attestedCredentialData[i] = aaguid[i];
-/**/	}
-/**/	attestedCredentialData[16] = (credentialIdLength >> 8) & 0xFF;// upper part of credential ID length
-/**/	attestedCredentialData[17] = credentialIdLength & 0xFF; // lower part of credential ID length
-/**/	for(int i = 0; i < credentialIdLength; i++){ // credentialIdLength bytes credentialID
-/**/		attestedCredentialData[i+18] = credentialID[i];
-/**/	}
-/**/	for(int i = 0; i < public_key_size; i++){ // the public key bytes
-/**/		attestedCredentialData[i+credentialIdLength+18] = serialized_public_key[i];
-/**/	}
-/**/
-/**/	// construct authenticator Data
-/**/	int sizeof_authenticatorData = sizeof(attestedCredentialData)+37;
-/**/	__u8 authenticatorData[sizeof_authenticatorData];
-/**/	for(int i = 0; i<32; i++){
-/**/		authenticatorData[i] = rpIdHash[i];
-/**/	} 
-/**/	authenticatorData[32] = flags;
-/**/	authenticatorData[33] = (signCount >> 24) & 0xFF;
-/**/	authenticatorData[34] = (signCount >> 16) & 0xFF;
-/**/	authenticatorData[35] = (signCount >> 8) & 0xFF;
-/**/	authenticatorData[36] = signCount & 0xFF;
-/**/	for(int i = 0; i < attCredDataLen; i++){
-/**/		authenticatorData[i+37] = attestedCredentialData[i];
-/**/	}
-/**/
-/**/	// create attestation signature
-/**/	OpenSSL_add_all_algorithms();
-/**/	int message_size = sizeof(authenticatorData) + sizeof(clientDataHash);
-/**/	char message[message_size]; 
-/**/	unsigned char sigHash[32];	
-/**/	EVP_MD_CTX *mdctx_sign;
-/**/	const EVP_MD *md_sign;
-/**/	unsigned int md_len_sign;
-/**/	md_sign = EVP_get_digestbyname("sha256");
-/**/	mdctx_sign = EVP_MD_CTX_new();
-/**/	EVP_DigestInit_ex(mdctx_sign, md_sign, NULL);
-/**/	EVP_DigestUpdate(mdctx_sign, message, message_size);
-/**/	EVP_DigestFinal_ex(mdctx_sign, sigHash, &md_len_sign);
-/**/	EVP_MD_CTX_free(mdctx_sign);
-/**/	ECDSA_SIG *signature;
-/**/	signature = ECDSA_do_sign(sigHash, 32, newEcKey);
-/**/	
-/**/	// construct attestation object
-/**/	cbor_item_t *attestation_object = cbor_new_definite_map(3); // CBOR Map mit 3 feldern:
-/**/																															//  fmt -> string; authData -> bytearray; attStmt -> cbor map;
-/**/	struct cbor_pair pair;
-/**/	// add format
-/**/	pair.key = cbor_build_uint8(1);
-/**/	pair.value = cbor_build_string("packed");
-/**/	cbor_map_add(attestation_object, pair);
-/**/	// add authData
-/**/	pair.key = cbor_build_uint8(2);
-/**/	pair.value = cbor_build_bytestring(authenticatorData, sizeof_authenticatorData);
-/**/	cbor_map_add(attestation_object, pair);
-/**/	// add attStmt
-/**/	unsigned char bb[0];
-/**/	unsigned char *bbb = bb;
-/**/	i2d_ECDSA_SIG(signature, &bbb);
-/**/	cbor_item_t *attStmt = cbor_new_definite_map(2);
-/**/	pair.key = cbor_build_string("alg");
-/**/	pair.value = cbor_build_uint8(6);
-/**/	cbor_mark_negint(pair.value);
-/**/	cbor_map_add(attStmt, pair);
-/**/	pair.key = cbor_build_string("sig");
-/**/	pair.value = cbor_build_bytestring(bbb, ECDSA_size(newEcKey));
-/**/	cbor_map_add(attStmt, pair);
-/**/	pair.key = cbor_build_uint8(3);
-/**/	pair.value = attStmt;
-/**/	cbor_map_add(attestation_object, pair);
-/**/
-/**/	// serialize attestation object
-/**/	__u8 buff[1024];
-/**/	__u16 l = cbor_serialize(attestation_object, buff, 1024);
-/**/	printf("serialized length: %d", l);
-/**/	__u8 data[l+1];
-/**/	data[0] = 0x00;
-/**/	for(int i = 0; i<l; i++){
-/**/		data[i+1] = buff[i];
-/**/	}
-/**/
-/**/	send_packages(package, write_flag, data, cid, 0x90, l+1);
-/**/
-/**/	//////// kept for possible future authentication
-/**/	// 	//// extract private key from decrypted user handle
-/**/  //   // decryptedtext_len = decrypt(ciphertext, ciphertext_len, key, iv,
-/**/  //   //                             decryptedtext);
-/**/	// 	// 
-/**/	// 	// cbor_item_t *deserialized = cbor_load(decryptedtext, decryptedtext_len, &result);
-/**/	// 	// struct cbor_pair *maap = cbor_map_handle(deserialized);
-/**/	// 	// int size = cbor_bytestring_length(maap[1].value);
-/**/	// 	// cbor_mutable_data bytes = cbor_bytestring_handle(maap[1].value);
-/**/	// 	// printf("bytes: %s", bytes);
-/**/	// 	// 
-/**/	// 	///////////////////////////////////////////////////////
-/**/ }
-/**/
-/**/ cbor_item_t *unwrap_credential_id(unsigned char *ciphertext, int ciphertext_len, unsigned char *key, unsigned char *iv, unsigned char *decryptedtext) {
-/**/	  /* Decrypt the ciphertext */
-/**/		struct cbor_load_result result;
-/**/		int decryptedtext_len;
-/**/    decryptedtext_len = decrypt(ciphertext, ciphertext_len, key, iv,
-/**/                                decryptedtext);
-/**/
-/**/		cbor_item_t *deserialized = cbor_load(decryptedtext, decryptedtext_len, &result);
-/**/		return deserialized;
-/**/ }
-/**/
-/**/void ctaphid_cbor(__u8 cid[], __u8 cbor_cmd, __u8 payload[], __u16 payload_length){
-/**/	switch(cbor_cmd){
-/**/		case 0x01:
-/**/			printf("Authenticator make credential\n");
-/**/			ctap_cbor_make_credential(cid, payload, payload_length);
-/**/			break;
-/**/		case 0x02:
-/**/			printf("Authenticator Get Assertion\n");
-/**/			break;
-/**/		case 0x04:
-/**/			printf("Authenticator Get Info\n");
-/**/			ctap_cbor_get_info(cid);
-/**/			break;
-/**/		case 0x06:
-/**/			printf("Authenticator Client PIN\n");
-/**/			break;
-/**/		case 0x07:
-/**/			printf("Authenticator Reset\n");
-/**/			break;
-/**/		case 0x08:
-/**/			printf("Authenticator Get Next Assertion\n");
-/**/			break;
-/**/		case 0x09:
-/**/			printf("Authenticator Bio Enrollment\n");
-/**/			break;
-/**/		case 0x0A:
-/**/			printf("Authenticator Credential Management\n");
-/**/			break;
-/**/		case 0x0B:
-/**/			printf("Authenticator Selection\n");
-/**/			break;
-/**/		case 0x0C:
-/**/			printf("Authenticator Config\n");
-/**/			break;
-/**/	}
-/**/}
-
-/*----------------------------------------------------------------------*/
 int usb_raw_open() {
 	int fd = open("/dev/raw-gadget", O_RDWR);
 	if (fd < 0) {
@@ -922,25 +514,25 @@ struct usb_config_descriptor usb_config = {
 // 	.bNumDeviceCaps =	0,
 // };
 
-// changed for fakeYubi - taken from USB usage table -> https://www.usb.org/sites/default/files/hutrr48.pdf
-char usb_hid_report[] = {
-	0x06, 0xd0, 0xf1,		//USAGE_PAGE (FIDO ALLIANCE)
-	0x09,0x01,//USAGE(U2FHIDAuthenticatorDevice)
-	0xa1,0x01,//COLLECTION(Application)
-	0x09,0x20,//USAGE(InputReportData)
-	0x15,0x00,//LOGICAL_MINIMUM(0)
-	0x26,0xff,0x00,//LOGICAL_MAXIMUM(255)
-	0x75,0x08,//REPORT_SIZE(8)
-	0x95,0x40,//REPORT_COUNT(64)
-	0x81,0x02,//INPUT(Data,Var,Abs)
-	0x09,0x21,//USAGE(OutputReportData)
-	0x15,0x00,//LOGICAL_MINIMUM(0)
-	0x26,0xff,0x00,//LOGICAL_MAXIMUM(255)
-	0x75,0x08,//REPORT_SIZE(8)
-	0x95,0x40,//REPORT_COUNT(64)
-	0x91,0x02,//OUTPUT(Data,Var,Abs)
-	0xc0//END_COLLECTION
-};
+/**/// changed for fakeYubi - taken from USB usage table -> https://www.usb.org/sites/default/files/hutrr48.pdf
+/**/char usb_hid_report[] = {
+/**/	0x06, 0xd0, 0xf1,		//USAGE_PAGE (FIDO ALLIANCE)
+/**/	0x09,0x01,//USAGE(U2FHIDAuthenticatorDevice)
+/**/	0xa1,0x01,//COLLECTION(Application)
+/**/	0x09,0x20,//USAGE(InputReportData)
+/**/	0x15,0x00,//LOGICAL_MINIMUM(0)
+/**/	0x26,0xff,0x00,//LOGICAL_MAXIMUM(255)
+/**/	0x75,0x08,//REPORT_SIZE(8)
+/**/	0x95,0x40,//REPORT_COUNT(64)
+/**/	0x81,0x02,//INPUT(Data,Var,Abs)
+/**/	0x09,0x21,//USAGE(OutputReportData)
+/**/	0x15,0x00,//LOGICAL_MINIMUM(0)
+/**/	0x26,0xff,0x00,//LOGICAL_MAXIMUM(255)
+/**/	0x75,0x08,//REPORT_SIZE(8)
+/**/	0x95,0x40,//REPORT_COUNT(64)
+/**/	0x91,0x02,//OUTPUT(Data,Var,Abs)
+/**/	0xc0//END_COLLECTION
+/**/};
 
 /**/// changes for fakeYubi made by marcus propp
 /**/struct hid_descriptor usb_hid = {
@@ -1133,6 +725,9 @@ pthread_t ep_IN_thread;
 // pthread_t ep_int_in_thread;
 
 /**/// code changes for fakeYubi made by marcus propp
+/**/int write_flag[] = {0};// flag indicating if IN endpoint shall send data
+/**/__u8 package[64];	// empty package to work with globally
+/**/
 /**/void *ep_OUT_loop(void *arg) {
 /**/	int fd = (int)(long)arg;
 /**/	struct usb_raw_bulk_io io;
@@ -1151,16 +746,15 @@ pthread_t ep_IN_thread;
 /**/		io.inner.ep = ep_OUT;
 /**/		io.inner.flags = 0;
 /**/		io.inner.length = sizeof(io.data);
-/**/
 /**/		int rv = usb_raw_ep_read(fd, (struct usb_raw_ep_io *)&io);
-/**/
+/**/		printf("OUT: read %d bytes:\n", rv);
 /**/		if(first_package){
 /**/			printf("\ngetting first package for command: %d\n", (__u8)io.data[4]);
 /**/			for(int i = 0; i < 4; i++){
 /**/				cid[i] = (__u8)io.data[i];
 /**/			}
 /**/			ctap_cmd = (__u8)io.data[4];
-/**/			if(ctap_cmd == 0x90) cbor_cmd = (__u8)io.data[7];
+// /**/			if(ctap_cmd == 0x90) cbor_cmd = (__u8)io.data[7];
 /**/			payload_length = (__u8)io.data[5] << 8 | (__u8)io.data[6];
 /**/			payload_left = (__u16)payload_length;
 /**/			printf("full payload length: 0x%02x\n", (__u16)payload_length);
@@ -1197,29 +791,11 @@ pthread_t ep_IN_thread;
 /**/			}
 /**/			printf("payload left: %d\n", (__u16)payload_left);
 /**/		}
-/**/
 /**/		if(ready){
 /**/			ready = 0;
 /**/			printf("ready to reply\n");
-/**/			switch (ctap_cmd) 
-/**/			{
-/**/			case 0x80+0x06:
-/**/				printf("CTAPHID_INIT\n");
-/**/				ctaphid_init(cid, buffer, sizeof(buffer));
-/**/				break;
-/**/			case 0x80+0x10:
-/**/				printf("CTAPHID_CBOR\n");
-/**/				ctaphid_cbor(cid, cbor_cmd, buffer, payload_length);
-/**/				break;
-/**/			case 0x80+0x11:
-/**/				printf("CANCEL\n");
-/**/				send_packages(package, write_flag, buffer, cid, 0x91, payload_length);
-/**/				break;
-/**/			default:
-/**/				break;
+/**/			fakeYubi_interface(package, write_flag, buffer, payload_length, cid, ctap_cmd);
 /**/			}
-/**/			printf("OUT: read %d bytes\n", rv);
-/**/		}
 /**/	}
 /**/	return NULL;
 /**/}
@@ -1233,7 +809,6 @@ pthread_t ep_IN_thread;
 /**/		io.inner.ep = ep_IN;
 /**/		io.inner.flags = 0;
 /**/		io.inner.length = sizeof(io.data);
-/**/	
 /**/		while(write_flag[0]==2){
 /**/			for(int i = 0; i < sizeof(package); i++){
 /**/				io.inner.data[i] = package[i];
@@ -1243,7 +818,6 @@ pthread_t ep_IN_thread;
 /**/			//printf("IN: wrote %d bytes:\n", rv);	
 /**/			sleep(0.1);
 /**/		}
-/**/	
 /**/		if(write_flag[0]==1){
 /**/			for(int i = 0; i < sizeof(package); i++){
 /**/				io.inner.data[i] = package[i];
@@ -1251,9 +825,8 @@ pthread_t ep_IN_thread;
 /**/			int rv = usb_raw_ep_write(fd, (struct usb_raw_ep_io *)&io);
 /**/			printf("IN: wrote %d bytes:\n", rv);	
 /**/			write_flag[0] = 0;
-/**/			printf("write flag: %d", *write_flag);
+/**/			printf("write flag: %d\n", *write_flag);
 /**/		}
-/**/	
 /**/		else{
 /**/			sleep(0.01);			// code breaks without a short delay ¯\_(ツ)_/¯
 /**/		}

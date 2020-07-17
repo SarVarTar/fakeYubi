@@ -1,5 +1,5 @@
-#ifndef AUTHENTICATORMAKECREDENTIAL_H_INCLUDED
-#define AUTHENTICATORMAKECREDENTIAL_H_INCLUDED
+#ifndef DEPENDENCIES_H_INCLUDED
+#define DEPENDENCIES_H_INCLUDED
 
 #include <cbor.h>
 #include <sys/types.h>
@@ -14,8 +14,10 @@
 #include <openssl/pem.h>
 #include <openssl/ecdsa.h>
 #include <openssl/bn.h>
+#include <sys/mman.h>
 #include "authenticatorStatics.h"
-#include "authenticatorMakeCredential.h"
 #include "sendpackages.h"
+#include "ctaplib.h"
+#include "interface.h"
 
 #endif
